@@ -55,6 +55,7 @@ set(SOURCES
         src/MurmurHash2.cpp
         src/MurmurHash3.cpp
         src/Sequence.cpp
+        src/SvgPlot.cpp
         src/Timer.cpp
         src/TsvReader.cpp
         )
@@ -69,6 +70,53 @@ set_target_properties(receptor_detector PROPERTIES PREFIX "")
 
 # Eliminate an extraneous -D during compilation.
 set_target_properties(receptor_detector PROPERTIES DEFINE_SYMBOL "")
+
+
+##############################################
+# ------------------------------------------ #
+# -------- LINKING EXTERNAL LIBRARY -------- #
+# ----------------- edlib ------------------ #
+# ------------------------------------------ #
+##############################################
+
+# Need to explicitly enable ExternalProject functionality
+include(ExternalProject)
+
+# Download or update library as an external project
+ExternalProject_Add(project_edlib
+        GIT_REPOSITORY https://github.com/Martinsos/edlib.git
+        PREFIX ${CMAKE_SOURCE_DIR}/external/edlib
+        #        DOWNLOAD_COMMAND ""
+        #        UPDATE_COMMAND ""
+        CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${CMAKE_SOURCE_DIR}/external/edlib/ -DCMAKE_INSTALL_LIBDIR=${CMAKE_SOURCE_DIR}/external/edlib/lib
+        STAMP_DIR ${CMAKE_SOURCE_DIR}/external/edlib/stamp
+        #        SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/edlib/src
+        BINARY_DIR ${CMAKE_SOURCE_DIR}/external/edlib/build
+        INSTALL_DIR ${CMAKE_SOURCE_DIR}/external/edlib/
+        INSTALL_COMMAND make install
+        )
+
+# Define INSTALL_DIR as the install directory for external library
+ExternalProject_Get_Property(project_edlib INSTALL_DIR)
+
+# Create new library for external project (so it can be linked with main library)
+add_library(edlib STATIC IMPORTED)
+set_property(TARGET edlib
+        PROPERTY IMPORTED_LOCATION ${INSTALL_DIR}/lib/libedlib.a)
+
+# Define main library as dependent on the downloaded project (transitively)
+add_dependencies(edlib
+        project_edlib)
+
+add_dependencies(receptor_detector edlib)
+
+# Ensure that main library has access to primary dependencies' and secondary dependencies' headers
+include_directories(external/edlib/include/)
+
+# Add runtime path for main library so it can access external library
+#set_property(TARGET GetBlunted PROPERTY INSTALL_RPATH "$ORIGIN" "${INSTALL_DIR}/bin/ogdf")
+
+message(STATUS "INSTALL_DIR: ${INSTALL_DIR}")
 
 
 ##############################################
@@ -117,6 +165,8 @@ find_package(Threads REQUIRED)
 set(TESTS
         test_binary_sequence
         test_binary_sequence_performance
+        test_edlib
+        test_kmer_classifier
         )
 
 foreach(FILENAME_PREFIX ${TESTS})
@@ -124,6 +174,7 @@ foreach(FILENAME_PREFIX ${TESTS})
     target_link_libraries(${FILENAME_PREFIX}
             receptor_detector
             Threads::Threads
+            edlib
             )
 
 endforeach()
@@ -141,6 +192,7 @@ foreach(FILENAME_PREFIX ${EXECUTABLES})
     target_link_libraries(${FILENAME_PREFIX}
             receptor_detector
             Threads::Threads
+            edlib
             )
 
 endforeach()

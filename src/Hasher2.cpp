@@ -68,12 +68,8 @@ uint64_t Hasher2::hash(const BinarySequence<uint64_t>& kmer, size_t seed_index) 
 ///
 /// \param sequence
 /// \param i iteration of hashing to compute, corresponding to a hash function
-void Hasher2::hash_sequence(const Sequence& sequence, const size_t hash_index) {
+void Hasher2::hash_sequence(const Sequence& sequence, size_t hash_index) {
     BinarySequence<uint64_t> kmer;
-
-    set<uint64_t> h_visited;
-    set<uint64_t> hm_visited;
-    set<string> s_visited;
 
     // Forward iteration
     for (auto& c: sequence.sequence) {
@@ -94,36 +90,65 @@ void Hasher2::hash_sequence(const Sequence& sequence, const size_t hash_index) {
 
             if (h < n_bins){
                 auto& m = bin_mutexes.at(h % bin_mutexes.size());
+                auto& bin = bins.at(h % bins.size());
+
                 m.lock();
-                bins.at(h % bins.size()).emplace(sequence.name);
+                bin.emplace(sequence.name);
                 m.unlock();
             }
         }
     }
-
-//    // Reverse complement iteration
-//    for (auto iter = sequence.sequence.rbegin(); iter != sequence.sequence.rend(); iter++) {
-//        if (BinarySequence<uint64_t>::base_to_index.at(*iter) == 4){
-//            // Reset kmer and don't hash any region with non ACGT chars
-//            kmer = {};
-//            continue;
-//        }
-//
-//        if (kmer.length < k) {
-//            kmer.push_back(get_reverse_complement(*iter));
-//        } else {
-//            kmer.shift(get_reverse_complement(*iter));
-//            uint64_t h = hash(kmer, hash_index);
-//
-//            if (h < n_bins){
-//                auto& m = bin_mutexes.at(h % bin_mutexes.size());
-//                m.lock();
-//                bins.at(h % bins.size()).emplace(sequence.name);
-//                m.unlock();
-//            }
-//        }
-//    }
 }
+
+
+///
+/// \param sequence
+/// \param i iteration of hashing to compute, corresponding to a hash function
+void Hasher2::classify_kmers(const Sequence& sequence, size_t hash_index, const string& target_name, vector<double>& probabilities) {
+    probabilities.clear();
+
+    BinarySequence<uint64_t> kmer;
+
+    // Forward iteration
+    for (size_t i=0; i < sequence.size(); i++) {
+        char c = sequence.sequence[i];
+
+        double match_probability = 0;
+
+        if (BinarySequence<uint64_t>::base_to_index.at(c) == 4){
+            // Reset kmer and don't hash any region with non ACGT chars
+            kmer = {};
+            probabilities.emplace_back(match_probability);
+            continue;
+        }
+
+        if (kmer.length < k) {
+            kmer.push_back(c);
+        } else {
+            kmer.shift(c);
+        }
+
+        if (kmer.length == k){
+            uint64_t h = hash(kmer, hash_index);
+
+            if (h < n_bins){
+                auto& bin = bins.at(h % bins.size());
+
+                bool on_target = (bin.count(target_name) > 0);
+
+                // Considering the previously hashed sequences as an exhaustive set, find the probability
+                // that the current k-mer is a match, based on the number of on- vs off-target hits
+                if (on_target) {
+                    size_t total = bin.size();
+                    match_probability = 1.0/double(total);
+                }
+            }
+        }
+
+        probabilities.emplace_back(match_probability);
+    }
+}
+
 
 
 void Hasher2::write_hash_frequency_distribution() const{
@@ -300,21 +325,6 @@ void Hasher2::get_symmetrical_matches(map<string, string>& symmetrical_matches, 
 }
 
 
-int64_t Hasher2::get_intersection_size(const string& a, const string& b) const{
-    int64_t intersection = 0;
-
-    auto result_a = overlaps.find(a);
-
-    if (result_a != overlaps.end()){
-        auto result_b = result_a->second.find(b);
-
-        intersection = result_b->second;
-    }
-
-    return intersection;
-}
-
-
 void Hasher2::for_each_overlap(const function<void(const pair<string,string>, int64_t weight)>& f) const{
     for (const auto& [a, result]: overlaps){
         for (const auto& [b, count]: result){
@@ -405,7 +415,7 @@ void Hasher2::write_results(path output_directory) const{
 
         size_t i = 0;
 
-        // Report the top hits by % Jaccard similarity for each
+        // Report the top hits by % similarity for each (unidirectional, not Jaccard)
         for (auto iter = sorted_scores.rbegin(); iter != sorted_scores.rend(); ++iter){
             auto score = iter->first;
             auto other_name = iter->second;
