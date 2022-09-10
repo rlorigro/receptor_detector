@@ -150,7 +150,6 @@ void Hasher2::classify_kmers(const Sequence& sequence, size_t hash_index, const 
 }
 
 
-
 void Hasher2::write_hash_frequency_distribution() const{
     map <size_t, size_t> distribution;
 
@@ -276,30 +275,7 @@ void Hasher2::get_best_matches(map<string, string>& matches, double certainty_th
         string max_name = sorted_scores.rbegin()->second;
         auto max_hashes = double(sorted_scores.rbegin()->first);
 
-//        double all_hashes = 0;
-//
-//        size_t i = 0;
-//        // Report the top hits by % Jaccard similarity for each
-//        for (auto iter = sorted_scores.rbegin(); iter != sorted_scores.rend(); ++iter){
-//            auto score = iter->first;
-//            auto other_name = iter->second;
-//
-//            // First item is the maximum score
-//            if (i == 0){
-//                max_hashes = double(score);
-//                max_name = other_name;
-//            }
-//
-//            all_hashes += double(score);
-//
-//            i++;
-//
-//            if (i == 10){
-//                break;
-//            }
-//        }
-
-        // Just take any top hit with greater than % threshold match, later will be used during symmetry filtering
+        // Just take any top hit with greater than % threshold match
         if (max_hashes/double(total_hashes) > certainty_threshold){
             matches[name] = max_name;
         }

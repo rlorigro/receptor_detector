@@ -17,90 +17,33 @@ using receptor_detector::TsvReader;
 using std::ostream;
 using std::sort;
 using std::deque;
+using std::numeric_limits;
 
 
 void plot_edlib_alignment(const string& ref, const string& query, SvgPlot& plot){
-    auto config = edlibNewAlignConfig(5000, EDLIB_MODE_HW, EDLIB_TASK_PATH, nullptr, 0);
+    auto config = edlibNewAlignConfig(-1, EDLIB_MODE_HW, EDLIB_TASK_PATH, nullptr, 0);
 
-    EdlibAlignResult result = edlibAlign(ref.c_str(), ref.size(), query.c_str(), query.size(), config);
+    EdlibAlignResult result = edlibAlign(query.c_str(), query.size(), ref.c_str(), ref.size(), config);
     if (result.status != EDLIB_STATUS_OK) {
         throw runtime_error("ERROR: edlib alignment failed");
     }
 
-    vector<size_t> ref_move = {1,1,0,1};
-    vector<size_t> query_move = {1,0,1,1};
-
-    size_t prev_ref_index = 0;
-    size_t prev_query_index = 0;
-    size_t ref_index = ref_move[result.alignment[0]];
-    size_t query_index = query_move[result.alignment[0]];
-
+    vector<size_t> ref_move = {1,0,1,1};
+    vector<size_t> query_move = {1,1,0,1};
 
     for (size_t i=0; i<size_t(result.alignmentLength); i++) {
         cerr << int(result.alignment[i]);
     }
     cerr << '\n';
 
-    size_t kernel_size = 10;
-
     int64_t left_trim = 0;
-    deque<int16_t> d;
-    for (size_t i=0; i<size_t(result.alignmentLength/2); i++) {
-        left_trim += ref_move[result.alignment[i]];
-
-        d.push_back(result.alignment[i]);
-
-        if (d.size() > kernel_size){
-            d.pop_front();
-        }
-
-//        cerr << i << '\n';
-        size_t score = 0;
-        for (auto x: d){
-//            cerr << x << ' ';
-            score += (x == 0);
-        }
-//        cerr << '\n';
-
-        double identity = double(score) / double(kernel_size);
-
-//        cerr << identity << '\n';
-
-        if (identity > 0.7){
-            break;
-        }
-    }
-
     int64_t right_trim = ref.size();
-    d.clear();
-    for (size_t i=size_t(result.alignmentLength-1); i>size_t(result.alignmentLength/2); i--) {
-        right_trim -= ref_move[result.alignment[i]];
 
-        d.push_back(result.alignment[i]);
-
-        if (d.size() > kernel_size){
-            d.pop_front();
-        }
-
-//        cerr << i << '\n';
-        size_t score = 0;
-        for (auto x: d){
-//            cerr << x << ' ';
-            score += (x == 0);
-        }
-//        cerr << '\n';
-
-        double identity = double(score) / double(kernel_size);
-
-//        cerr << identity << '\n';
-
-        if (identity > 0.6){
-            break;
-        }
+    // Find gaps provided by edlib local aligner. Choose longest alignment when multiple options exist.
+    if (result.numLocations > 0){
+        left_trim = result.startLocations[result.numLocations-1];
+        right_trim = result.endLocations[result.numLocations-1];
     }
-
-    left_trim = max(int64_t(0), int64_t(left_trim - kernel_size));
-    right_trim = min(int64_t(ref.size()), int64_t(right_trim + kernel_size));
 
     plot.add_line(left_trim, int64_t(0), left_trim, int64_t(query.size()), 1, "gray");
     plot.add_line(right_trim, int64_t(0), right_trim, int64_t(query.size()), 1, "gray");
@@ -108,6 +51,11 @@ void plot_edlib_alignment(const string& ref, const string& query, SvgPlot& plot)
     cerr << "editDistance: " << result.editDistance << '\n';
     cerr << "left_trim: " << left_trim << '\n';
     cerr << "right_trim: " << right_trim << '\n';
+
+    size_t prev_ref_index = left_trim;
+    size_t prev_query_index = 0;
+    size_t ref_index = prev_ref_index + ref_move[result.alignment[0]];
+    size_t query_index = query_move[result.alignment[0]];
 
     string color = "orange";
     for (size_t i=1; i<size_t(result.alignmentLength); i++){
@@ -127,6 +75,49 @@ void plot_edlib_alignment(const string& ref, const string& query, SvgPlot& plot)
     plot.add_line(prev_ref_index, prev_query_index, ref_index, query_index, 1, "orange");
 
     edlibFreeAlignResult(result);
+}
+
+
+pair<int64_t, int64_t> get_alignment_bounds(const string& ref, const string& query){
+    auto config = edlibNewAlignConfig(-1, EDLIB_MODE_HW, EDLIB_TASK_PATH, nullptr, 0);
+
+    EdlibAlignResult result = edlibAlign(query.c_str(), query.size(), ref.c_str(), ref.size(), config);
+    if (result.status != EDLIB_STATUS_OK) {
+        throw runtime_error("ERROR: edlib alignment failed");
+    }
+
+    int64_t left_trim = 0;
+    int64_t right_trim = ref.size();
+
+    // Find end gaps provided by local aligner. Choose longest alignment when multiple options exist.
+    if (result.numLocations > 0){
+        left_trim = result.startLocations[result.numLocations-1];
+        right_trim = result.endLocations[result.numLocations-1];
+    }
+
+    cerr << "editDistance: " << result.editDistance << '\n';
+    cerr << "left_trim: " << left_trim << '\n';
+    cerr << "right_trim: " << right_trim << '\n';
+
+    edlibFreeAlignResult(result);
+
+    return {left_trim, right_trim};
+}
+
+
+int64_t get_edit_distance(const string& ref, const string& query){
+    auto config = edlibNewAlignConfig(-1, EDLIB_MODE_NW, EDLIB_TASK_DISTANCE, nullptr, 0);
+
+    EdlibAlignResult result = edlibAlign(query.c_str(), query.size(), ref.c_str(), ref.size(), config);
+    if (result.status != EDLIB_STATUS_OK) {
+        throw runtime_error("ERROR: edlib alignment failed");
+    }
+
+    cerr << "editDistance: " << result.editDistance << '\n';
+
+    edlibFreeAlignResult(result);
+
+    return result.editDistance;
 }
 
 
@@ -203,11 +194,11 @@ void find_clusters(vector<double> x, int32_t distance, vector<Cluster>& clusters
             clusters.back().update(i, x[i]);
         }
         else{
+            // Decay the cluster counter. When it reaches 0, a new cluster is made
             if (not clusters.empty()){
                 clusters.back().decrement();
             }
         }
-
 //        cerr << i << ' ' << x[i] << ' ';
 //        cerr << '\n';
     }
@@ -268,7 +259,7 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
     TsvReader ref_reader(tsv_ref_path);
     TsvReader read_reader(tsv_reads_path);
 
-    int32_t min_length = 999999;
+    int32_t min_length = numeric_limits<int32_t>::max();
     ref_reader.for_item_in_tsv([&](Sequence& s){
         if (s.name == "LINKER"){
             linker = s;
@@ -281,15 +272,17 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
         }
     });
 
-    cerr << min_length << '\n';
-
-    Hasher2 hasher(k, sample_rate, n_iterations, n_threads);
+    Hasher2 hasher(7, 0.9999999999999999, 1, n_threads);
     hasher.hash(ref_sequences);
 
     vector<double> match_probabilities;
     vector<Cluster> clusters;
     vector<Cluster> top_two;
 
+    vector <Sequence> split_sequences;
+    string prefix = "split_read_";
+
+    size_t s_index = 0;
     read_reader.for_item_in_tsv([&](Sequence& s){
         cerr << s.name << '\n';
 
@@ -299,14 +292,8 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
 
         for (auto& c: top_two) {
             cerr << c << '\n';
-        }
-        cerr << '\n';
 
-        if (top_two.size() < 2) {
-            cerr << "WARNING" << '\n';
-        }
-
-        for (auto c: top_two){
+            // Pad the region if it isn't the expected length
             auto diff = linker.size() - (c.stop - c.start);
             if (diff > 0){
                 c.start -= (diff + k);
@@ -318,13 +305,156 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
             cerr << l << '\n';
             cerr << linker.sequence << '\n';
 
-            path plot_path = output_directory / (s.name + "_vs_LINKER" + to_string(c.start) + '-' + to_string(c.stop) + ".svg");
-            SvgPlot plot(plot_path, 800, 800, 0, l.size(), 0, linker.size(), true);
-            plot_edlib_alignment(l, linker.sequence, plot);
+//            path plot_path = output_directory / (s.name + "_vs_LINKER" + to_string(c.start) + '-' + to_string(c.stop) + ".svg");
+//            SvgPlot plot(plot_path, 800, 800, 0, l.size(), 0, linker.size(), true);
+//            plot_edlib_alignment(l, linker.sequence, plot);
 
+            // Resolve the optimal start/stop using local alignment
+            auto [left_trim, right_trim] = get_alignment_bounds(l, linker.sequence);
 
+            // Update the bounds
+            c.stop = c.start + right_trim;
+            c.start += left_trim;
+        }
+
+        sort(top_two.begin(), top_two.end(), [&](const Cluster& a, const Cluster& b){
+            return a.start < b.start;
+        });
+
+        for (auto& c: top_two) {
+            cerr << c << '\n';
+        }
+
+        // Break out regions
+        size_t a_start = 0;
+        size_t a_stop = top_two[0].start;
+
+        size_t b_start = top_two[0].stop;
+        size_t b_stop = top_two[1].start;
+
+        size_t c_start = top_two[1].stop;
+        size_t c_stop = s.size();
+
+        size_t a_length = a_stop - a_start;
+        size_t b_length = b_stop - b_start;
+        size_t c_length = c_stop - c_start;
+
+        Sequence a;
+        Sequence b;
+        Sequence c;
+
+        auto a_id = to_string(s_index) + "_a";
+        a_id = string(6 - a_id.size(), '0') + a_id;
+        a.name = prefix + a_id;
+        a.sequence = s.sequence.substr(a_start, a_length);
+
+        auto b_id = to_string(s_index) + "_b";
+        b_id = string(6 - b_id.size(), '0') + b_id;
+        b.name = prefix + b_id;
+        b.sequence = s.sequence.substr(b_start, b_length);
+
+        auto c_id = to_string(s_index) + "_c";
+        c_id = string(6 - c_id.size(), '0') + c_id;
+        c.name = prefix + c_id;
+        c.sequence = s.sequence.substr(c_start, c_length);
+
+        // Update vector of split reads
+        split_sequences.emplace_back(a);
+        split_sequences.emplace_back(b);
+        split_sequences.emplace_back(c);
+
+        cerr << s.sequence << '\n';
+        cerr << a.sequence << string(top_two[0].stop - top_two[0].start,'_') << b.sequence << string(top_two[1].stop - top_two[1].start,'_') << c.sequence << '\n';
+
+        s_index++;
+    });
+
+    unordered_map<string, size_t> name_to_sequence_index;
+    for (size_t i=0; i < split_sequences.size(); i++){
+        auto& name = split_sequences[i].name;
+        name_to_sequence_index[name] = i;
+    }
+
+    // Dump all the sequences together for hashing again!
+    split_sequences.insert(split_sequences.end(), ref_sequences.begin(), ref_sequences.end());
+
+    Hasher2 rehasher(k, sample_rate, n_iterations, n_threads);
+    rehasher.hash(split_sequences);
+
+    size_t max_hits = 4;
+    double min_similarity = 0;
+
+    path hash_log_path = output_directory / "hash_results.csv";
+    ofstream hash_log_csv(hash_log_path);
+    if (not (hash_log_csv.good() and hash_log_csv.is_open())){
+        throw runtime_error("ERROR: couldn't write to file: " + hash_log_path.string());
+    }
+
+    map<string, pair<string, int64_t> > best_matches;
+
+    for (auto& [name, index]: name_to_sequence_index){
+        best_matches[name] = {"",numeric_limits<int64_t>::max()};
+    }
+
+    rehasher.for_each_overlap(max_hits, min_similarity,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
+        // Skip the reference sequences
+        if (a.substr(0,11) != prefix){
+            return;
+        }
+        // Skip the read-to-read matches
+        if (b.substr(0,11) == prefix){
+            return;
+        }
+
+        auto& ref = split_sequences[name_to_sequence_index[a]].sequence;
+        auto& query = split_sequences[name_to_sequence_index[b]].sequence;
+
+        auto edit_distance = get_edit_distance(ref, query);
+
+        hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
+
+        cerr << a << ' ' << b << '\n';
+        cerr << ref << '\n';
+        cerr << query << '\n';
+        cerr << '\n';
+
+        // Pre-filled the map, guaranteed previous entry exists
+        int64_t prev_edit_distance = best_matches.at(a).second;
+
+        if (edit_distance < prev_edit_distance) {
+            best_matches[a] = {b, edit_distance};
         }
     });
+
+    path best_matches_path = output_directory / "best_matches.csv";
+    ofstream best_matches_csv(best_matches_path);
+    if (not (best_matches_csv.good() and best_matches_csv.is_open())){
+        throw runtime_error("ERROR: couldn't write to file: " + best_matches_path.string());
+    }
+
+    string prev_name = "";
+    vector<string> result;
+    for (const auto& [name, item]: best_matches){
+        auto& [other_name, score] = item;
+
+        if (name.back() == 'a') {
+            cerr << name << '\n';
+            auto id = name.substr(0, name.find_last_of('_'));
+            cerr << id << '\n';
+            id = id.substr(id.find_last_of('_') + 1);
+            cerr << id << '\n';
+            id = to_string(stoi(id));
+            cerr << id << '\n';
+
+            cerr << "read" + id << '\t' << other_name << ':';
+        }
+        else if (name.back() == 'b') {
+            cerr << other_name << ':';
+        }
+        else if (name.back() == 'c') {
+            cerr << other_name << '\n';
+        }
+    }
 }
 
 
