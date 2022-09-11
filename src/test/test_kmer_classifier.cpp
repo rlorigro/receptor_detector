@@ -280,7 +280,6 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
     vector<Cluster> top_two;
 
     vector <Sequence> split_sequences;
-    string prefix = "split_read_";
 
     size_t s_index = 0;
     read_reader.for_item_in_tsv([&](Sequence& s){
@@ -343,19 +342,13 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
         Sequence b;
         Sequence c;
 
-        auto a_id = to_string(s_index) + "_a";
-        a_id = string(6 - a_id.size(), '0') + a_id;
-        a.name = prefix + a_id;
+        a.name = s.name + "_a";
         a.sequence = s.sequence.substr(a_start, a_length);
 
-        auto b_id = to_string(s_index) + "_b";
-        b_id = string(6 - b_id.size(), '0') + b_id;
-        b.name = prefix + b_id;
+        b.name = s.name + "_b";
         b.sequence = s.sequence.substr(b_start, b_length);
 
-        auto c_id = to_string(s_index) + "_c";
-        c_id = string(6 - c_id.size(), '0') + c_id;
-        c.name = prefix + c_id;
+        c.name = s.name + "_c";
         c.sequence = s.sequence.substr(c_start, c_length);
 
         // Update vector of split reads
@@ -369,20 +362,23 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
         s_index++;
     });
 
+    map<string, pair<string, int64_t> > best_matches;
+
+    for (auto& s: split_sequences){
+        best_matches[s.name] = {"",numeric_limits<int64_t>::max()};
+    }
+
+    // Dump all the sequences together for hashing again!
+    split_sequences.insert(split_sequences.end(), ref_sequences.begin(), ref_sequences.end());
+
     unordered_map<string, size_t> name_to_sequence_index;
     for (size_t i=0; i < split_sequences.size(); i++){
         auto& name = split_sequences[i].name;
         name_to_sequence_index[name] = i;
     }
 
-    // Dump all the sequences together for hashing again!
-    split_sequences.insert(split_sequences.end(), ref_sequences.begin(), ref_sequences.end());
-
     Hasher2 rehasher(k, sample_rate, n_iterations, n_threads);
     rehasher.hash(split_sequences);
-
-    size_t max_hits = 4;
-    double min_similarity = 0;
 
     path hash_log_path = output_directory / "hash_results.csv";
     ofstream hash_log_csv(hash_log_path);
@@ -390,19 +386,16 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
         throw runtime_error("ERROR: couldn't write to file: " + hash_log_path.string());
     }
 
-    map<string, pair<string, int64_t> > best_matches;
-
-    for (auto& [name, index]: name_to_sequence_index){
-        best_matches[name] = {"",numeric_limits<int64_t>::max()};
-    }
+    size_t max_hits = 4;
+    double min_similarity = 0;
 
     rehasher.for_each_overlap(max_hits, min_similarity,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
         // Skip the reference sequences
-        if (a.substr(0,11) != prefix){
+        if (a.substr(0,4) != "read"){
             return;
         }
         // Skip the read-to-read matches
-        if (b.substr(0,11) == prefix){
+        if (b.substr(0,4) == "read"){
             return;
         }
 
@@ -416,10 +409,12 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
         cerr << a << ' ' << b << '\n';
         cerr << ref << '\n';
         cerr << query << '\n';
-        cerr << '\n';
 
-        // Pre-filled the map, guaranteed previous entry exists
-        int64_t prev_edit_distance = best_matches.at(a).second;
+        // Pre-filled map, guaranteed previous entry exists
+        auto& [prev_match,prev_edit_distance] = best_matches.at(a);
+
+        cerr << "prev_edit_distance" << ',' << prev_edit_distance << ',' << prev_match << '\n';
+        cerr << '\n';
 
         if (edit_distance < prev_edit_distance) {
             best_matches[a] = {b, edit_distance};
@@ -432,21 +427,52 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
         throw runtime_error("ERROR: couldn't write to file: " + best_matches_path.string());
     }
 
-    string prev_name = "";
+    path debug_output_path = output_directory / "debug_output.csv";
+    ofstream debug_output_csv(best_matches_path);
+    if (not (debug_output_csv.good() and debug_output_csv.is_open())){
+        throw runtime_error("ERROR: couldn't write to file: " + debug_output_path.string());
+    }
+
+    vector <pair <string, pair <string, int64_t> > > sorted_results;
+
+    for (auto& [name, item]: best_matches){
+        sorted_results.push_back({name, item});
+    }
+
+    sort(sorted_results.begin(), sorted_results.end(), [&](const pair <string, pair <string, int64_t> >& a, const pair <string, pair <string, int64_t> >& b){
+        auto name_a = a.first;
+        auto name_b = b.first;
+
+        auto id_a = name_a.substr(4);
+        auto id_b = name_b.substr(4);
+
+        id_a = id_a.substr(0, id_a.find_last_of('_'));
+        id_b = id_b.substr(0, id_b.find_last_of('_'));
+
+        size_t i_a = stoi(id_a);
+        size_t i_b = stoi(id_b);
+
+        auto sub_id_a = name_a.back();
+        auto sub_id_b = name_b.back();
+
+        bool ordinal;
+        if (i_a == i_b){
+            ordinal = sub_id_a < sub_id_b;
+        }
+        else {
+            ordinal = i_a < i_b;
+        }
+
+        return ordinal;
+    });
+
     vector<string> result;
-    for (const auto& [name, item]: best_matches){
+    for (const auto& [name, item]: sorted_results){
         auto& [other_name, score] = item;
 
         if (name.back() == 'a') {
-            cerr << name << '\n';
             auto id = name.substr(0, name.find_last_of('_'));
-            cerr << id << '\n';
-            id = id.substr(id.find_last_of('_') + 1);
-            cerr << id << '\n';
-            id = to_string(stoi(id));
-            cerr << id << '\n';
-
-            cerr << "read" + id << '\t' << other_name << ':';
+            cerr << id << '\t' << other_name << ':';
         }
         else if (name.back() == 'b') {
             cerr << other_name << ':';
