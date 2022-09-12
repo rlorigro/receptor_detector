@@ -318,7 +318,7 @@ void write_results_to_file(path output_directory, const map<string, HashResult>&
     vector <pair <string, HashResult> > sorted_results;
     sort_results_by_read_id(best_matches, sorted_results);
 
-    path best_matches_path = output_directory / "best_matches.csv";
+    path best_matches_path = output_directory / "best_matches.tsv";
     ofstream best_matches_csv(best_matches_path);
     if (not (best_matches_csv.good() and best_matches_csv.is_open())){
         throw runtime_error("ERROR: couldn't write to file: " + best_matches_path.string());
