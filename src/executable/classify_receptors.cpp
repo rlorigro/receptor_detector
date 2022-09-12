@@ -329,16 +329,10 @@ void write_results_to_file(
 }
 
 
-void classify(path output_directory, size_t n_threads){
+void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, size_t n_threads){
     Timer t;
 
     create_directories(output_directory);
-
-    path this_path = __FILE__;
-    path project_directory = this_path.parent_path().parent_path().parent_path();
-
-    path tsv_ref_path = project_directory / "data" / "linker_and_receptor_segments.tsv";
-    path tsv_reads_path = project_directory / "data" / "unlabelled_reads.tsv";
 
     Sequence linker;
     vector<Sequence> ref_sequences;
@@ -421,7 +415,7 @@ void classify(path output_directory, size_t n_threads){
     }
 
     // Write header
-    hash_log_csv << "a" << ',' << "b" << ',' << "hash_similarity" << "n_hashes" << ',' << "total_hashes" << ',' << "edit_distance" << ',' << "identity" << '\n';
+    hash_log_csv << "a" << ',' << "b" << ',' << "hash_similarity" << ',' << "n_hashes" << ',' << "total_hashes" << ',' << "edit_distance" << ',' << "identity" << '\n';
 
     size_t max_hits = 4;
     double min_similarity = 0;
@@ -445,7 +439,7 @@ void classify(path output_directory, size_t n_threads){
         // Do global alignment on the substring, assuming linker splitting was good
         auto edit_distance = get_edit_distance(ref, query);
 
-        hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
+        hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << ',' << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
 
         // Pre-filled map, guaranteed entry exists
         auto& [prev_match,prev_edit_distance] = best_matches.at(a);
@@ -465,6 +459,8 @@ void classify(path output_directory, size_t n_threads){
 
 int main (int argc, char* argv[]){
     path output_directory;
+    path reference_path;
+    path reads_path;
     size_t n_threads = 1;
 
     CLI::App app{"App description"};
@@ -476,6 +472,18 @@ int main (int argc, char* argv[]){
             ->required();
 
     app.add_option(
+            "-r,--reference",
+            reference_path,
+            "Path to tsv containing receptor and linker sequences")
+            ->required();
+
+    app.add_option(
+            "-i,--input_reads",
+            reads_path,
+            "Path to tsv containing reads to be split and labeled")
+            ->required();
+
+    app.add_option(
             "-t,--n_threads",
             n_threads,
             "Maximum number of threads to use")
@@ -483,7 +491,7 @@ int main (int argc, char* argv[]){
 
     CLI11_PARSE(app, argc, argv);
 
-    classify(output_directory, n_threads);
+    classify(reference_path, reads_path, output_directory, n_threads);
 
     return 0;
 }

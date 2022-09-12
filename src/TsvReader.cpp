@@ -15,6 +15,10 @@ TsvReader::TsvReader(path tsv_path):
 void TsvReader::for_item_in_tsv(const function<void(Sequence& sequence)>& f) const{
     ifstream file(tsv_path);
 
+    if (not (file.is_open() and file.good())){
+        throw runtime_error("ERROR: could not open file: " + tsv_path.string());
+    }
+
     string name;
     string sequence;
 
@@ -57,6 +61,10 @@ void TsvReader::for_item_in_tsv(const function<void(Sequence& sequence)>& f) con
 
 void TsvReader::for_rle_item_in_tsv(const function<void(Sequence& sequence)>& f) const{
     ifstream file(tsv_path);
+
+    if (not (file.is_open() and file.good())){
+        throw runtime_error("ERROR: could not open file: " + tsv_path.string());
+    }
 
     string name;
     string sequence;
