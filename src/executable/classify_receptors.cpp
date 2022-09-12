@@ -419,7 +419,7 @@ void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, siz
 
     // Do hashing
     k = 6;
-    Hasher2 rehasher(k, 0.6, 8, n_threads);
+    Hasher2 rehasher(k, 0.5, 8, n_threads);
     rehasher.hash(split_sequences);
 
     // Open a log for hashing results
@@ -464,7 +464,6 @@ void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, siz
         hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << ',' << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
 
         if (edit_distance < result.edit_distance) {
-            cerr << "better" << '\n';
             result.other_name = b;
             result.edit_distance = edit_distance;
         }
