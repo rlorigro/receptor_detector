@@ -90,7 +90,7 @@ private:
     const size_t max_bin_size = 500;
 
     // Skip assigning pairs for any match that has fewer than this many hashes
-    const size_t min_hashes = 40;
+    const size_t min_hashes = 0;
 
     // How many more bins than the total length of the observed sequence do we want to have, to prevent collisions?
     const size_t bins_scaling_factor = 40;
