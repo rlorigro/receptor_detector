@@ -1,14 +1,16 @@
-#include "SvgPlot.hpp"
 #include "Filesystem.hpp"
 #include "TsvReader.hpp"
 #include "Sequence.hpp"
 #include "Hasher2.hpp"
+#include "Cluster.hpp"
+#include "SvgPlot.hpp"
 #include "CLI11.hpp"
 #include "edlib.h"
 
-using receptor_detector::Hasher2;
-using receptor_detector::Sequence;
 using receptor_detector::TsvReader;
+using receptor_detector::Sequence;
+using receptor_detector::Hasher2;
+using receptor_detector::Cluster;
 
 #include <algorithm>
 #include <iostream>
@@ -112,61 +114,6 @@ int64_t get_edit_distance(const string& ref, const string& query){
     edlibFreeAlignResult(result);
 
     return result.editDistance;
-}
-
-
-///
-/// Very simple chaining mechanism for sequential data. Purely based on a distance threshold.
-///
-class Cluster{
-public:
-    double mass;
-    double max;
-    int32_t c;
-    int32_t start;
-    int32_t stop;
-    int32_t counter;
-
-    Cluster(int32_t k);
-    void update(int32_t i, double x);
-    void decrement();
-};
-
-
-Cluster::Cluster(int32_t c):
-        mass(0),
-        max(0),
-        c(c),
-        start(0),
-        stop(0),
-        counter(c)
-{}
-
-
-ostream& operator<<(ostream& o, const Cluster& c){
-    o << c.mass << ',' << c.max << ',' << c.start << ',' << c.stop << ',' << c.stop - c.start << ',' << c.counter;
-
-    return o;
-}
-
-
-void Cluster::update(int32_t i, double x){
-    if (mass == 0){
-        start = i;
-    }
-
-    if (x > max){
-        max = x;
-    }
-
-    mass += x;
-    stop = i;
-    counter = c;
-}
-
-
-void Cluster::decrement(){
-    counter--;
 }
 
 
@@ -487,7 +434,7 @@ void classify(path output_directory, size_t n_threads){
 
         hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
 
-        // Pre-filled map, guaranteed previous entry exists
+        // Pre-filled map, guaranteed entry exists
         auto& [prev_match,prev_edit_distance] = best_matches.at(a);
 
         if (edit_distance < prev_edit_distance) {

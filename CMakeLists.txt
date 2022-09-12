@@ -49,6 +49,7 @@ include_directories(
 set(SOURCES
         src/BinaryIO.cpp
         src/BinarySequence.cpp
+        src/Cluster.cpp
         src/Hasher2.cpp
         src/IncrementalIdMap.cpp
         src/misc.cpp
