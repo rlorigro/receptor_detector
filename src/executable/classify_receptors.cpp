@@ -462,7 +462,6 @@ void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, siz
         auto edit_distance = get_edit_distance(ref, query);
 
         hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << ',' << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
-        cerr << "prev: " << result.edit_distance << ' ' << edit_distance << ' ' << result.n_hits << '\n';
 
         if (edit_distance < result.edit_distance) {
             cerr << "better" << '\n';
