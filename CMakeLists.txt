@@ -166,7 +166,6 @@ set(TESTS
         test_binary_sequence
         test_binary_sequence_performance
         test_edlib
-        test_kmer_classifier
         )
 
 foreach(FILENAME_PREFIX ${TESTS})
@@ -185,6 +184,7 @@ endforeach()
 set(EXECUTABLES
         compute_minhash
         compute_rle_minhash
+        classify_receptors
         )
 
 foreach(FILENAME_PREFIX ${EXECUTABLES})

@@ -95,10 +95,6 @@ pair<int64_t, int64_t> get_alignment_bounds(const string& ref, const string& que
         right_trim = result.endLocations[result.numLocations-1];
     }
 
-    cerr << "editDistance: " << result.editDistance << '\n';
-    cerr << "left_trim: " << left_trim << '\n';
-    cerr << "right_trim: " << right_trim << '\n';
-
     edlibFreeAlignResult(result);
 
     return {left_trim, right_trim};
@@ -112,8 +108,6 @@ int64_t get_edit_distance(const string& ref, const string& query){
     if (result.status != EDLIB_STATUS_OK) {
         throw runtime_error("ERROR: edlib alignment failed");
     }
-
-    cerr << "editDistance: " << result.editDistance << '\n';
 
     edlibFreeAlignResult(result);
 
@@ -222,11 +216,6 @@ void select_top_two(int32_t min_distance, vector<Cluster>& clusters, vector<Clus
         return a.mass > b.mass;
     });
 
-    for (auto& c: clusters) {
-        cerr << c << '\n';
-    }
-    cerr << '\n';
-
     for (auto& c: clusters){
         if (top_two.size() == 2) {
             break;
@@ -243,199 +232,85 @@ void select_top_two(int32_t min_distance, vector<Cluster>& clusters, vector<Clus
 }
 
 
-void classify(path output_directory, double sample_rate, size_t k, size_t n_iterations, size_t n_threads){
-    create_directories(output_directory);
+void split_sequence(
+        const Sequence& linker,
+        const Sequence& s,
+        size_t k,
+        vector<Cluster>& top_two,
+        vector <Sequence>& split_sequences
+        ){
 
-    path this_path = __FILE__;
-    path project_directory = this_path.parent_path().parent_path().parent_path();
+    for (auto& c: top_two) {
 
-    path tsv_ref_path = project_directory / "data" / "linker_and_receptor_segments.tsv";
-    path tsv_reads_path = project_directory / "data" / "unlabelled_reads.tsv";
-
-    Sequence linker;
-    vector<Sequence> ref_sequences;
-    vector<Sequence> read_sequences;
-
-    TsvReader ref_reader(tsv_ref_path);
-    TsvReader read_reader(tsv_reads_path);
-
-    int32_t min_length = numeric_limits<int32_t>::max();
-    ref_reader.for_item_in_tsv([&](Sequence& s){
-        if (s.name == "LINKER"){
-            linker = s;
+        // Pad the region if it isn't the expected length (will be trimmed later after local alignment)
+        auto diff = linker.size() - (c.stop - c.start);
+        if (diff > 0){
+            c.start -= (diff + k);
+            c.stop += (diff + k);
         }
 
-        ref_sequences.emplace_back(s);
-
-        if (s.size() < min_length){
-            min_length = s.size();
-        }
-    });
-
-    Hasher2 hasher(7, 0.9999999999999999, 1, n_threads);
-    hasher.hash(ref_sequences);
-
-    vector<double> match_probabilities;
-    vector<Cluster> clusters;
-    vector<Cluster> top_two;
-
-    vector <Sequence> split_sequences;
-
-    size_t s_index = 0;
-    read_reader.for_item_in_tsv([&](Sequence& s){
-        cerr << s.name << '\n';
-
-        hasher.classify_kmers(s, 0, "LINKER", match_probabilities);
-        find_clusters(match_probabilities, k*2, clusters);
-        select_top_two(min_length, clusters, top_two);
-
-        for (auto& c: top_two) {
-            cerr << c << '\n';
-
-            // Pad the region if it isn't the expected length
-            auto diff = linker.size() - (c.stop - c.start);
-            if (diff > 0){
-                c.start -= (diff + k);
-                c.stop += (diff + k);
-            }
-
-            auto l = s.sequence.substr(c.start, c.stop - c.start);
-
-            cerr << l << '\n';
-            cerr << linker.sequence << '\n';
+        auto l = s.sequence.substr(c.start, c.stop - c.start);
 
 //            path plot_path = output_directory / (s.name + "_vs_LINKER" + to_string(c.start) + '-' + to_string(c.stop) + ".svg");
 //            SvgPlot plot(plot_path, 800, 800, 0, l.size(), 0, linker.size(), true);
 //            plot_edlib_alignment(l, linker.sequence, plot);
 
-            // Resolve the optimal start/stop using local alignment
-            auto [left_trim, right_trim] = get_alignment_bounds(l, linker.sequence);
+        // Resolve the optimal start/stop using local alignment
+        auto [left_trim, right_trim] = get_alignment_bounds(l, linker.sequence);
 
-            // Update the bounds
-            c.stop = c.start + right_trim;
-            c.start += left_trim;
-        }
+        // Update the bounds
+        c.stop = c.start + right_trim;
+        c.start += left_trim;
+    }
 
-        sort(top_two.begin(), top_two.end(), [&](const Cluster& a, const Cluster& b){
-            return a.start < b.start;
-        });
-
-        for (auto& c: top_two) {
-            cerr << c << '\n';
-        }
-
-        // Break out regions
-        size_t a_start = 0;
-        size_t a_stop = top_two[0].start;
-
-        size_t b_start = top_two[0].stop;
-        size_t b_stop = top_two[1].start;
-
-        size_t c_start = top_two[1].stop;
-        size_t c_stop = s.size();
-
-        size_t a_length = a_stop - a_start;
-        size_t b_length = b_stop - b_start;
-        size_t c_length = c_stop - c_start;
-
-        Sequence a;
-        Sequence b;
-        Sequence c;
-
-        a.name = s.name + "_a";
-        a.sequence = s.sequence.substr(a_start, a_length);
-
-        b.name = s.name + "_b";
-        b.sequence = s.sequence.substr(b_start, b_length);
-
-        c.name = s.name + "_c";
-        c.sequence = s.sequence.substr(c_start, c_length);
-
-        // Update vector of split reads
-        split_sequences.emplace_back(a);
-        split_sequences.emplace_back(b);
-        split_sequences.emplace_back(c);
-
-        cerr << s.sequence << '\n';
-        cerr << a.sequence << string(top_two[0].stop - top_two[0].start,'_') << b.sequence << string(top_two[1].stop - top_two[1].start,'_') << c.sequence << '\n';
-
-        s_index++;
+    sort(top_two.begin(), top_two.end(), [&](const Cluster& a, const Cluster& b){
+        return a.start < b.start;
     });
 
-    map<string, pair<string, int64_t> > best_matches;
+    // Break out regions
+    size_t a_start = 0;
+    size_t a_stop = top_two[0].start;
 
-    for (auto& s: split_sequences){
-        best_matches[s.name] = {"",numeric_limits<int64_t>::max()};
-    }
+    size_t b_start = top_two[0].stop;
+    size_t b_stop = top_two[1].start;
 
-    // Dump all the sequences together for hashing again!
-    split_sequences.insert(split_sequences.end(), ref_sequences.begin(), ref_sequences.end());
+    size_t c_start = top_two[1].stop;
+    size_t c_stop = s.size();
 
-    unordered_map<string, size_t> name_to_sequence_index;
-    for (size_t i=0; i < split_sequences.size(); i++){
-        auto& name = split_sequences[i].name;
-        name_to_sequence_index[name] = i;
-    }
+    size_t a_length = a_stop - a_start;
+    size_t b_length = b_stop - b_start;
+    size_t c_length = c_stop - c_start;
 
-    Hasher2 rehasher(k, sample_rate, n_iterations, n_threads);
-    rehasher.hash(split_sequences);
+    Sequence a;
+    Sequence b;
+    Sequence c;
 
-    path hash_log_path = output_directory / "hash_results.csv";
-    ofstream hash_log_csv(hash_log_path);
-    if (not (hash_log_csv.good() and hash_log_csv.is_open())){
-        throw runtime_error("ERROR: couldn't write to file: " + hash_log_path.string());
-    }
+    a.name = s.name + "_a";
+    a.sequence = s.sequence.substr(a_start, a_length);
 
-    size_t max_hits = 4;
-    double min_similarity = 0;
+    b.name = s.name + "_b";
+    b.sequence = s.sequence.substr(b_start, b_length);
 
-    rehasher.for_each_overlap(max_hits, min_similarity,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
-        // Skip the reference sequences
-        if (a.substr(0,4) != "read"){
-            return;
-        }
-        // Skip the read-to-read matches
-        if (b.substr(0,4) == "read"){
-            return;
-        }
+    c.name = s.name + "_c";
+    c.sequence = s.sequence.substr(c_start, c_length);
 
-        auto& ref = split_sequences[name_to_sequence_index[a]].sequence;
-        auto& query = split_sequences[name_to_sequence_index[b]].sequence;
+    // Update vector of split reads
+    split_sequences.emplace_back(a);
+    split_sequences.emplace_back(b);
+    split_sequences.emplace_back(c);
 
-        auto edit_distance = get_edit_distance(ref, query);
+//    cerr << s.sequence << '\n';
+//    cerr << a.sequence << string(top_two[0].stop - top_two[0].start,'_') << b.sequence << string(top_two[1].stop - top_two[1].start,'_') << c.sequence << '\n';
 
-        hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
+}
 
-        cerr << a << ' ' << b << '\n';
-        cerr << ref << '\n';
-        cerr << query << '\n';
 
-        // Pre-filled map, guaranteed previous entry exists
-        auto& [prev_match,prev_edit_distance] = best_matches.at(a);
+void sort_results_by_read_id(
+        const map<string, pair<string, int64_t> >& best_matches,
+        vector <pair <string, pair <string, int64_t> > >& sorted_results
+        ){
 
-        cerr << "prev_edit_distance" << ',' << prev_edit_distance << ',' << prev_match << '\n';
-        cerr << '\n';
-
-        if (edit_distance < prev_edit_distance) {
-            best_matches[a] = {b, edit_distance};
-        }
-    });
-
-    path best_matches_path = output_directory / "best_matches.csv";
-    ofstream best_matches_csv(best_matches_path);
-    if (not (best_matches_csv.good() and best_matches_csv.is_open())){
-        throw runtime_error("ERROR: couldn't write to file: " + best_matches_path.string());
-    }
-
-    path debug_output_path = output_directory / "debug_output.csv";
-    ofstream debug_output_csv(best_matches_path);
-    if (not (debug_output_csv.good() and debug_output_csv.is_open())){
-        throw runtime_error("ERROR: couldn't write to file: " + debug_output_path.string());
-    }
-
-    vector <pair <string, pair <string, int64_t> > > sorted_results;
-
-    for (auto& [name, item]: best_matches){
+    for (const auto& [name, item]: best_matches){
         sorted_results.push_back({name, item});
     }
 
@@ -465,30 +340,167 @@ void classify(path output_directory, double sample_rate, size_t k, size_t n_iter
 
         return ordinal;
     });
+}
+
+
+void write_results_to_file(
+        path output_directory,
+        const map<string, pair<string, int64_t> >& best_matches){
+
+    vector <pair <string, pair <string, int64_t> > > sorted_results;
+
+    sort_results_by_read_id(best_matches, sorted_results);
+
+    path best_matches_path = output_directory / "best_matches.csv";
+    ofstream best_matches_csv(best_matches_path);
+    if (not (best_matches_csv.good() and best_matches_csv.is_open())){
+        throw runtime_error("ERROR: couldn't write to file: " + best_matches_path.string());
+    }
 
     vector<string> result;
-    for (const auto& [name, item]: sorted_results){
-        auto& [other_name, score] = item;
+    for (auto& [name, item]: sorted_results){
+        auto [other_name, score] = item;
+
+        // Some short sequences have no hits, so just report a placeholder
+        if (other_name.empty()){
+            other_name = "unknown";
+        }
 
         if (name.back() == 'a') {
             auto id = name.substr(0, name.find_last_of('_'));
-            cerr << id << '\t' << other_name << ':';
+            best_matches_csv << id << '\t' << other_name << ':';
         }
         else if (name.back() == 'b') {
-            cerr << other_name << ':';
+            best_matches_csv << other_name << ':';
         }
         else if (name.back() == 'c') {
-            cerr << other_name << '\n';
+            best_matches_csv << other_name << '\n';
         }
     }
 }
 
 
+void classify(path output_directory, size_t n_threads){
+    create_directories(output_directory);
+
+    path this_path = __FILE__;
+    path project_directory = this_path.parent_path().parent_path().parent_path();
+
+    path tsv_ref_path = project_directory / "data" / "linker_and_receptor_segments.tsv";
+    path tsv_reads_path = project_directory / "data" / "unlabelled_reads.tsv";
+
+    Sequence linker;
+    vector<Sequence> ref_sequences;
+    vector<Sequence> read_sequences;
+
+    TsvReader ref_reader(tsv_ref_path);
+    TsvReader read_reader(tsv_reads_path);
+
+    // This value is used later to tell how far apart linkers should be at a minimum
+    int32_t min_length = numeric_limits<int32_t>::max();
+
+    ref_reader.for_item_in_tsv([&](Sequence& s){
+        if (s.name == "LINKER"){
+            linker = s;
+        }
+
+        ref_sequences.emplace_back(s);
+
+        if (s.size() < min_length){
+            min_length = s.size();
+        }
+    });
+
+    // Do an exhaustive kmer comparison
+    size_t k = 7;
+    Hasher2 hasher(k, 0.9999999999999999, 1, n_threads);
+    hasher.hash(ref_sequences);
+
+    vector<double> match_probabilities;
+    vector<Cluster> clusters;
+    vector<Cluster> top_two;
+
+    vector <Sequence> split_sequences;
+
+    // Iterate input reads, find linkers, and split into subreads
+    size_t s_index = 0;
+    read_reader.for_item_in_tsv([&](Sequence& s){
+        hasher.classify_kmers(s, 0, "LINKER", match_probabilities);
+        find_clusters(match_probabilities, k*2, clusters);
+        select_top_two(min_length, clusters, top_two);
+        split_sequence(linker, s, k, top_two, split_sequences);
+
+        s_index++;
+    });
+
+    map<string, pair<string, int64_t> > best_matches;
+
+    // Initialize best matches
+    for (auto& s: split_sequences){
+        best_matches[s.name] = {"",numeric_limits<int64_t>::max()};
+    }
+
+    // Dump all the sequences together for hashing again!
+    split_sequences.insert(split_sequences.end(), ref_sequences.begin(), ref_sequences.end());
+
+    // Build map from name to index
+    unordered_map<string, size_t> name_to_sequence_index;
+    for (size_t i=0; i < split_sequences.size(); i++){
+        auto& name = split_sequences[i].name;
+        name_to_sequence_index[name] = i;
+    }
+
+    // Do hashing
+    k = 6;
+    Hasher2 rehasher(k, 0.6, 8, n_threads);
+    rehasher.hash(split_sequences);
+
+    // Open a log for hashing results
+    path hash_log_path = output_directory / "hash_results.csv";
+    ofstream hash_log_csv(hash_log_path);
+    if (not (hash_log_csv.good() and hash_log_csv.is_open())){
+        throw runtime_error("ERROR: couldn't write to file: " + hash_log_path.string());
+    }
+
+    // Write header
+    hash_log_csv << "a" << ',' << "b" << ',' << "hash_similarity" << "n_hashes" << ',' << "total_hashes" << ',' << "edit_distance" << ',' << "identity" << '\n';
+
+    size_t max_hits = 4;
+    double min_similarity = 0;
+
+    // Iterate hash results and compute full alignments for top n hits
+    rehasher.for_each_overlap(max_hits, min_similarity,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
+        // Skip the reference sequences
+        if (a.substr(0,4) != "read"){
+            return;
+        }
+        // Skip the read-to-read matches
+        if (b.substr(0,4) == "read"){
+            return;
+        }
+
+        auto& ref = split_sequences[name_to_sequence_index[a]].sequence;
+        auto& query = split_sequences[name_to_sequence_index[b]].sequence;
+
+        // Do global alignment on the substring, assuming linker splitting was good
+        auto edit_distance = get_edit_distance(ref, query);
+
+        hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
+
+        // Pre-filled map, guaranteed previous entry exists
+        auto& [prev_match,prev_edit_distance] = best_matches.at(a);
+
+        if (edit_distance < prev_edit_distance) {
+            best_matches[a] = {b, edit_distance};
+        }
+    });
+
+    write_results_to_file(output_directory, best_matches);
+}
+
+
 int main (int argc, char* argv[]){
     path output_directory;
-    double sample_rate = 0.1;
-    size_t k = 22;
-    size_t n_iterations = 10;
     size_t n_threads = 1;
 
     CLI::App app{"App description"};
@@ -500,24 +512,6 @@ int main (int argc, char* argv[]){
             ->required();
 
     app.add_option(
-            "-r,--sample_rate",
-            sample_rate,
-            "Sample rate. Proportion [0-1] of k-mers to retain during in comparison")
-            ->required();
-
-    app.add_option(
-            "-k,--kmer_length",
-            k,
-            "Length of k-mer to use for hashing")
-            ->required();
-
-    app.add_option(
-            "-n,--n_iterations",
-            n_iterations,
-            "Number of iterations (different hash functions), each at a rate of sample_rate/n_iterations")
-            ->required();
-
-    app.add_option(
             "-t,--n_threads",
             n_threads,
             "Maximum number of threads to use")
@@ -525,11 +519,7 @@ int main (int argc, char* argv[]){
 
     CLI11_PARSE(app, argc, argv);
 
-    if (sample_rate < 0 or sample_rate > 1){
-        throw std::runtime_error("ERROR: sample rate must be between 0 and 1.0");
-    }
-
-    classify(output_directory, sample_rate, k, n_iterations, n_threads);
+    classify(output_directory, n_threads);
 
     return 0;
 }
