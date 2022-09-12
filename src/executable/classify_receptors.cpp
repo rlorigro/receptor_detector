@@ -16,12 +16,14 @@ using receptor_detector::Timer;
 
 #include <algorithm>
 #include <iostream>
+#include <utility>
 #include <deque>
 
-using std::ostream;
-using std::sort;
-using std::deque;
 using std::numeric_limits;
+using std::ostream;
+using std::deque;
+using std::tuple;
+using std::sort;
 
 
 void plot_edlib_alignment(const string& ref, const string& query, SvgPlot& plot){
@@ -254,16 +256,36 @@ void split_sequence(
 }
 
 
+class HashResult{
+public:
+    string other_name;
+    int64_t edit_distance;
+    int64_t n_hits;
+
+    HashResult()=default;
+    HashResult(string other_name, int64_t edit_distance);
+};
+
+
+HashResult::HashResult(
+        string other_name,
+        int64_t edit_distance):
+    other_name(other_name),
+    edit_distance(edit_distance),
+    n_hits(0)
+{}
+
+
 void sort_results_by_read_id(
-        const map<string, pair<string, int64_t> >& best_matches,
-        vector <pair <string, pair <string, int64_t> > >& sorted_results
-        ){
+        const map<string, HashResult>& best_matches,
+        vector <pair <string, HashResult> >& sorted_results
+){
 
     for (const auto& [name, item]: best_matches){
         sorted_results.push_back({name, item});
     }
 
-    sort(sorted_results.begin(), sorted_results.end(), [&](const pair <string, pair <string, int64_t> >& a, const pair <string, pair <string, int64_t> >& b){
+    sort(sorted_results.begin(), sorted_results.end(), [&](const pair <string, HashResult>& a, const pair <string, HashResult>& b){
         auto name_a = a.first;
         auto name_b = b.first;
 
@@ -292,12 +314,8 @@ void sort_results_by_read_id(
 }
 
 
-void write_results_to_file(
-        path output_directory,
-        const map<string, pair<string, int64_t> >& best_matches){
-
-    vector <pair <string, pair <string, int64_t> > > sorted_results;
-
+void write_results_to_file(path output_directory, const map<string, HashResult>& best_matches){
+    vector <pair <string, HashResult> > sorted_results;
     sort_results_by_read_id(best_matches, sorted_results);
 
     path best_matches_path = output_directory / "best_matches.csv";
@@ -306,24 +324,21 @@ void write_results_to_file(
         throw runtime_error("ERROR: couldn't write to file: " + best_matches_path.string());
     }
 
-    vector<string> result;
     for (auto& [name, item]: sorted_results){
-        auto [other_name, score] = item;
-
         // Some short sequences have no hits, so just report a placeholder
-        if (other_name.empty()){
-            other_name = "unknown";
+        if (item.other_name.empty()){
+            item.other_name = "unknown";
         }
 
         if (name.back() == 'a') {
             auto id = name.substr(0, name.find_last_of('_'));
-            best_matches_csv << id << '\t' << other_name << ':';
+            best_matches_csv << id << '\t' << item.other_name << ':';
         }
         else if (name.back() == 'b') {
-            best_matches_csv << other_name << ':';
+            best_matches_csv << item.other_name << ':';
         }
         else if (name.back() == 'c') {
-            best_matches_csv << other_name << '\n';
+            best_matches_csv << item.other_name << '\n';
         }
     }
 }
@@ -383,7 +398,7 @@ void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, siz
         s_index++;
     });
 
-    map<string, pair<string, int64_t> > best_matches;
+    map<string, HashResult> best_matches;
 
     // Initialize best matches
     for (auto& s: split_sequences){
@@ -417,19 +432,26 @@ void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, siz
     // Write header
     hash_log_csv << "a" << ',' << "b" << ',' << "hash_similarity" << ',' << "n_hashes" << ',' << "total_hashes" << ',' << "edit_distance" << ',' << "identity" << '\n';
 
-    size_t max_hits = 4;
-    double min_similarity = 0;
+    size_t max_hits = 6;
 
     cerr << t << "Computing alignments for subreads" << '\n';
 
     // Iterate hash results and compute full alignments for top n hits
-    rehasher.for_each_overlap(max_hits, min_similarity,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
+    rehasher.for_each_overlap(100, 0,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
         // Skip the reference sequences
         if (a.substr(0,4) != "read"){
             return;
         }
         // Skip the read-to-read matches
         if (b.substr(0,4) == "read"){
+            return;
+        }
+
+        // Pre-filled map, guaranteed entry exists
+        auto& result = best_matches[a];
+
+        // Stop considering results after a number of hits
+        if (result.n_hits == max_hits){
             return;
         }
 
@@ -440,13 +462,15 @@ void classify(path tsv_ref_path, path tsv_reads_path, path output_directory, siz
         auto edit_distance = get_edit_distance(ref, query);
 
         hash_log_csv << a << ',' << b << ',' << double(n_hashes)/double(total_hashes) << ',' << n_hashes << ',' << total_hashes << ',' << edit_distance << ',' << double(edit_distance)/ref.size() << '\n';
+        cerr << "prev: " << result.edit_distance << ' ' << edit_distance << ' ' << result.n_hits << '\n';
 
-        // Pre-filled map, guaranteed entry exists
-        auto& [prev_match,prev_edit_distance] = best_matches.at(a);
-
-        if (edit_distance < prev_edit_distance) {
-            best_matches[a] = {b, edit_distance};
+        if (edit_distance < result.edit_distance) {
+            cerr << "better" << '\n';
+            result.other_name = b;
+            result.edit_distance = edit_distance;
         }
+
+        result.n_hits++;
     });
 
     cerr << t << "Writing results to: "  << output_directory << '\n';
