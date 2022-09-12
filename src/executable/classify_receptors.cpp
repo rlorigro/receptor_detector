@@ -4,6 +4,7 @@
 #include "Hasher2.hpp"
 #include "Cluster.hpp"
 #include "SvgPlot.hpp"
+#include "Timer.hpp"
 #include "CLI11.hpp"
 #include "edlib.h"
 
@@ -11,6 +12,7 @@ using receptor_detector::TsvReader;
 using receptor_detector::Sequence;
 using receptor_detector::Hasher2;
 using receptor_detector::Cluster;
+using receptor_detector::Timer;
 
 #include <algorithm>
 #include <iostream>
@@ -328,6 +330,8 @@ void write_results_to_file(
 
 
 void classify(path output_directory, size_t n_threads){
+    Timer t;
+
     create_directories(output_directory);
 
     path this_path = __FILE__;
@@ -346,6 +350,7 @@ void classify(path output_directory, size_t n_threads){
     // This value is used later to tell how far apart linkers should be at a minimum
     int32_t min_length = numeric_limits<int32_t>::max();
 
+    cerr << t << "Loading target sequences" << '\n';
     ref_reader.for_item_in_tsv([&](Sequence& s){
         if (s.name == "LINKER"){
             linker = s;
@@ -358,6 +363,8 @@ void classify(path output_directory, size_t n_threads){
         }
     });
 
+    cerr << t << "Hashing target sequences" << '\n';
+
     // Do an exhaustive kmer comparison
     size_t k = 7;
     Hasher2 hasher(k, 0.9999999999999999, 1, n_threads);
@@ -368,6 +375,8 @@ void classify(path output_directory, size_t n_threads){
     vector<Cluster> top_two;
 
     vector <Sequence> split_sequences;
+
+    cerr << t << "Splitting reads" << '\n';
 
     // Iterate input reads, find linkers, and split into subreads
     size_t s_index = 0;
@@ -397,6 +406,8 @@ void classify(path output_directory, size_t n_threads){
         name_to_sequence_index[name] = i;
     }
 
+    cerr << t << "Hashing subreads" << '\n';
+
     // Do hashing
     k = 6;
     Hasher2 rehasher(k, 0.6, 8, n_threads);
@@ -414,6 +425,8 @@ void classify(path output_directory, size_t n_threads){
 
     size_t max_hits = 4;
     double min_similarity = 0;
+
+    cerr << t << "Computing alignments for subreads" << '\n';
 
     // Iterate hash results and compute full alignments for top n hits
     rehasher.for_each_overlap(max_hits, min_similarity,[&](const string& a, const string& b, int64_t n_hashes, int64_t total_hashes){
@@ -442,7 +455,11 @@ void classify(path output_directory, size_t n_threads){
         }
     });
 
+    cerr << t << "Writing results to: "  << output_directory << '\n';
+
     write_results_to_file(output_directory, best_matches);
+
+    cerr << t << "Done" << '\n';
 }
 
 
